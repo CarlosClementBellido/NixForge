@@ -13,7 +13,7 @@
 
   networking.useDHCP = true;
 
-  # Interfaces LAN estáticas
+  # Interfaces LAN estáticas 
   networking.interfaces.enp2s0f1.useDHCP = false;
   networking.interfaces.enp2s0f1.ipv4.addresses = [{
     address = "192.168.10.1";
