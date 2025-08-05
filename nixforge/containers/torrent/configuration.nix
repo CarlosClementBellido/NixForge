@@ -28,15 +28,25 @@
     "download-dir" = "/var/media/videos";
     "rpc-bind-address" = "0.0.0.0";
     "rpc-enabled" = true;
+    "rpc-username" = "clement";
+    "rpc-password" = "1234";
     "rpc-port" = 9091;
     "rpc-whitelist-enabled" = false;
-    "rpc-authentication-required" = false;
+    "rpc-authentication-required" = true;
     "peer-port" = 51413;
     "port-forwarding-enabled" = true;
     "dht-enabled" = true;
     "pex-enabled" = true;
     "lpd-enabled" = true;
   };
+
+  environment.etc."transmission-daemon/settings.json".mode = "0644";
+
+  environment.etc."transmission-daemon/settings.json".user = "root";
+
+  environment.etc."transmission-daemon/settings.json".group = "root";
+
+  environment.etc."transmission-daemon/settings.json".target = "transmission-daemon/settings.json";
 
   system.stateVersion = "24.05";
 }
