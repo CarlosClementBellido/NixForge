@@ -1,0 +1,55 @@
+body {
+  font-family: sans-serif;
+  background: #0d1117;
+  color: #c9d1d9;
+  padding: 2rem;
+}
+
+h1 {
+  color: #58a6ff;
+}
+
+.card {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  padding: 1rem;
+  margin: 1rem 0;
+}
+
+a {
+  color: #58a6ff;
+  text-decoration: none;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.charts-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+  padding: 1.5rem;
+}
+
+.chart-card {
+  background: #000000;
+  border-radius: 12px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+  padding: 1rem;
+  transition: transform 0.2s;
+}
+
+.chart-card:hover {
+  transform: scale(1.01);
+}
+
+.chart-card h2 {
+  text-align: center;
+  font-size: 1.2rem;
+  margin-bottom: 1rem;
+  color: #ffffff;
+}

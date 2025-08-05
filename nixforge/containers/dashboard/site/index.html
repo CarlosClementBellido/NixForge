@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Clembell Server</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <h1>🧠 Clembell Server</h1>
+
+  <div class="card">
+    <h2>🌐 Servicios</h2>
+    <ul>
+      <li><a href="https://jellyfin.server.clementbellido.es">Jellyfin</a></li>
+      <li><a href="https://transmission.server.clementbellido.es">Transmission</a></li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>📊 Métricas en tiempo real</h2>
+    <div class="metrics">
+      <div>CPU global: <span id="cpu">--</span>%</div>
+      <div>RAM: <span id="ram">--</span>%</div>
+      <div>SWAP: <span id="swap">--</span>%</div>
+      <div>Disco: <span id="disk">--</span>%</div>
+      <div>Espacio usado: <span id="disk_used">--</span> / <span id="disk_total">--</span></div>
+      <div>Carga: <span id="load">--</span></div>
+      <div>Uptime: <span id="uptime">--</span></div>
+      <div>Usuarios conectados: <span id="users">--</span></div>
+      <div>Temperatura: <span id="temp">--</span>°C</div>
+      <div>Red (<span id="net_iface">--</span>): ↓ <span id="net_rx">--</span> ↑ <span id="net_tx">--</span></div>
+      <div>Temp. media: <span id="temp">--</span>°C</div>
+      <div>Temp. CPU0: <span id="temp_cpu0">--</span>°C</div>
+      <div>Temp. CPU1: <span id="temp_cpu1">--</span>°C</div>
+      <div>Temp. NVMe: <span id="temp_nvme">--</span>°C</div>
+    </div>
+
+    <div class="charts-container">
+      <div class="chart-card">
+        <h2>CPU</h2>
+        <canvas id="cpuChart"></canvas>
+      </div>
+      <div class="chart-card">
+        <h2>RAM</h2>
+        <canvas id="ramChart"></canvas>
+      </div>
+      <div class="chart-card">
+        <h2>Swap</h2>
+        <canvas id="swapChart"></canvas>
+      </div>
+      <div class="chart-card">
+        <h2>Disco</h2>
+        <canvas id="diskChart"></canvas>
+      </div>
+      <div class="chart-card">
+        <h2>Red</h2>
+        <canvas id="netChart"></canvas>
+      </div>
+      <div class="chart-card">
+        <h2>Temperatura</h2>
+        <canvas id="tempChart"></canvas>
+      </div>
+    </div>
+    
+
+  </div>
+
+  <script src="js/main.js"></script>
+</body>
+</html>

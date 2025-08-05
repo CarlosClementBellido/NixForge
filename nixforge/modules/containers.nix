@@ -30,4 +30,19 @@
     privateNetwork = false;
     config = import ../containers/ddns-ionos/configuration.nix;
   };
+
+  containers.dashboard = {
+    autoStart = true;
+    privateNetwork = true;
+
+    bindMounts."/etc/nginx/html/metrics.json" = {
+      hostPath = "/var/lib/metrics/metrics.json";
+      isReadOnly = true;
+    };
+
+    hostAddress = "192.168.102.1";
+    localAddress = "192.168.102.2";
+    config = import ../containers/dashboard/configuration.nix;
+  };
+
 }
