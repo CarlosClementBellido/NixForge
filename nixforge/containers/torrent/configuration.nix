@@ -1,5 +1,9 @@
 { config, pkgs, lib, ... }:
 
+
+let
+  credentials = builtins.fromJSON (builtins.readFile ../torrent/transmission.cred);
+in
 {
   systemd.services.transmission = {
     description = "Transmission BitTorrent Service";
@@ -28,8 +32,8 @@
     "download-dir" = "/var/media/videos";
     "rpc-bind-address" = "0.0.0.0";
     "rpc-enabled" = true;
-    "rpc-username" = "clement";
-    "rpc-password" = "1234";
+    "rpc-username" = credentials."rpc-username";
+    "rpc-password" = credentials."rpc-password";
     "rpc-port" = 9091;
     "rpc-whitelist-enabled" = false;
     "rpc-authentication-required" = true;
