@@ -53,6 +53,21 @@
         };
       };
 
+      "cockpit.server.clementbellido.es" = {
+        enableACME = true;
+        forceSSL = true;
+
+        locations."/" = {
+          proxyPass = "http://192.168.103.2:9090";
+          proxyWebsockets = true;
+          extraConfig = ''
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Real-IP $remote_addr;
+          '';
+        };
+      };
+
       "server.clementbellido.es" = {
         enableACME = true;
         forceSSL = true;

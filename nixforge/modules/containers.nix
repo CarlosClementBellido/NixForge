@@ -45,4 +45,18 @@
     config = import ../containers/dashboard/configuration.nix;
   };
 
+  containers.cockpit = {
+    autoStart = true;
+    privateNetwork = true;
+    hostAddress = "192.168.103.1";
+    localAddress = "192.168.103.2";
+
+    bindMounts."/run/libvirt" = {
+      hostPath = "/run/libvirt";
+      isReadOnly = false;
+    };
+
+    config = import ../containers/cockpit/configuration.nix;
+  };
+
 }

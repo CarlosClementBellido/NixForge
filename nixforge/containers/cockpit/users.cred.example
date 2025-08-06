@@ -1,0 +1,11 @@
+{ config, lib, pkgs, ... }:
+
+{
+  users.users.admin = {
+    isNormalUser = true;
+    password = "admin";
+    extraGroups = [ "wheel" "libvirtd" ];
+  };
+
+  users.extraGroups.libvirtd.members = [ "admin" ];
+}
