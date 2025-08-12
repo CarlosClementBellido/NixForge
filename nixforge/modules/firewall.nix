@@ -3,8 +3,8 @@
 {
   networking.firewall = {
     enable = true;
-    allowedTCPPorts = [ 8096 9091 51413 80 443 ];
-    allowedUDPPorts = [ 51413 ];
+    allowedTCPPorts = [ 8096 9091 51413 80 443 25565 8080 2022 8081 ];
+    allowedUDPPorts = [ 51413 25565 ];
     trustedInterfaces = [ "enp2s0f1" "enp4s0" ];
     extraCommands = ''
       iptables -A FORWARD -i enp2s0f1 -o enp2s0f0 -j ACCEPT

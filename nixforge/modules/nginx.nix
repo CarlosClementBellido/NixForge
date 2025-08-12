@@ -8,6 +8,49 @@
     recommendedOptimisation = true;
 
     virtualHosts = {
+      "pterodactyl.server.clementbellido.es" = {
+        enableACME = true;
+        forceSSL = true;
+        locations."/" = {
+          proxyPass = "http://192.168.104.2:8081";
+          proxyWebsockets = true;
+          extraConfig = ''
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header X-Forwarded-Port $server_port;
+
+            proxy_redirect off;
+            proxy_buffering off;
+            proxy_request_buffering off;
+
+            proxy_connect_timeout 300s;
+            proxy_send_timeout    300s;
+            proxy_read_timeout    300s;
+          '';
+        };
+      };
+
+      "wings.server.clementbellido.es" = {
+        enableACME = true;
+        forceSSL = true;
+
+        locations."/" = {
+          proxyPass = "http://192.168.104.2:8080";
+          proxyWebsockets = true;
+          extraConfig = ''
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 300s;
+            proxy_send_timeout 300s;
+          '';
+        };
+      };
+
       "transmission.server.clementbellido.es" = {
         enableACME = true;
         forceSSL = true;

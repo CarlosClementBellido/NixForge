@@ -59,4 +59,35 @@
     config = import ../containers/cockpit/configuration.nix;
   };
 
+  containers.pterodactyl = {
+    autoStart = true;
+    privateNetwork = true;
+    hostAddress = "192.168.104.1";
+    localAddress = "192.168.104.2";
+    config = import ../containers/pterodactyl/configuration.nix;
+
+    # Evita userns (-U) y fija DNS del contenedor en solo lectura
+    extraFlags = [
+      "--private-users=off"  # SIN userns
+      "--capability=all"
+      "--bind-ro=/var/lib/nixos/static-dns/resolv.conf:/etc/resolv.conf"
+    ];
+  };
+
+  # Usa nspawn sin -U a nivel global (como ya lo tenías)
+  systemd.services."systemd-nspawn@".serviceConfig.ExecStart = lib.mkForce [
+    ""
+    "systemd-nspawn --quiet --keep-unit --boot --link-journal=try-guest --network-veth --settings=override --machine=%i"
+  ];
+  
+  systemd.services."systemd-nspawn@".serviceConfig = {
+    PrivateUsers = false;
+    NoNewPrivileges = false;
+    KeyringMode = "inherit";
+    ProtectControlGroups = false;
+    ProtectKernelModules = false;
+    ProtectKernelTunables = false;
+    RestrictNamespaces = "";
+  };
+
 }
