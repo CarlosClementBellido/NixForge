@@ -14,6 +14,8 @@
       ./modules/containers.nix
       ./modules/nix-ld.nix
       ./modules/metrics-host.nix
+      ./modules/environment.nix
+      ./modules/systemd.nix
     ];
 
   system.stateVersion = "24.05";

@@ -1,13 +1,18 @@
 { config, pkgs, lib, ... }:
 
 let
-  myPhp = pkgs.php.buildEnv {
-    extensions = ({ enabled, all }: enabled ++ (with all; [ pdo pdo_mysql redis dom tokenizer zip bcmath intl ]));
-  };
-  nodejs = pkgs.nodejs_18;
+  # --- Ajustes generales ---
+  nodejs = pkgs.nodejs_18;  # Pterodactyl 1.x va bien con Node 18
   pteroDomain = "pterodactyl.server.clementbellido.es";
   webRoot     = "/var/www/pterodactyl";
   phpSock     = "/run/phpfpm-pterodactyl.sock";
+
+  # Ruta local (fuera del Nix store) para secretos
+  secretsDir  = ".";
+  dbPassCredName = "ptero-db.pass";     # Archivo plano con la contraseña
+  dbPassCredPath = "${secretsDir}/${dbPassCredName}";
+
+  # --- MariaDB init ---
   pteroInitSQL = pkgs.writeText "ptero-init.sql" ''
     CREATE DATABASE IF NOT EXISTS pterodactyl CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
     CREATE USER IF NOT EXISTS 'ptero'@'127.0.0.1' IDENTIFIED BY 'changeme';
@@ -15,36 +20,46 @@ let
     FLUSH PRIVILEGES;
   '';
 
+  # --- PHP con extensiones recomendadas ---
+  myPhp = pkgs.php.buildEnv {
+    extensions = ({ enabled, all }:
+      enabled ++ (with all; [
+        pdo pdo_mysql redis
+        dom tokenizer zip bcmath intl
+        gd mbstring curl iconv opcache fileinfo
+      ])
+    );
+  };
+
+  # runc envuelto (como tenías)
   runcWrapped = pkgs.writeShellScriptBin "runc-wrapped" ''
     #!/bin/sh
     subcmd="$1"
     case "$subcmd" in
-      create|run|exec)
-        exec ${pkgs.runc}/bin/runc --no-new-keyring "$@"
-        ;;
-      *)
-        exec ${pkgs.runc}/bin/runc "$@"
-        ;;
+      create|run|exec) exec ${pkgs.runc}/bin/runc --no-new-keyring "$@";;
+      *)               exec ${pkgs.runc}/bin/runc "$@";;
     esac
   '';
 in
 {
-  environment.systemPackages = [
-    pkgs.git pkgs.curl pkgs.wget pkgs.unzip pkgs.bash pkgs.coreutils pkgs.shadow pkgs.iptables 
-    pkgs.gnutar pkgs.gnugrep pkgs.gnused pkgs.gzip
-    pkgs.mariadb pkgs.redis
-    nodejs pkgs.yarn
-    myPhp pkgs.phpPackages.composer
-    pkgs.nginx pkgs.iproute2 pkgs.docker
+  environment.systemPackages = with pkgs; [
+    git curl wget unzip bash coreutils shadow iptables gnutar gnugrep gnused gzip
+    mariadb redis nodejs yarn myPhp phpPackages.composer nginx iproute2 docker
   ];
 
-  # Como montamos /etc/resolv.conf desde el host, que resolvconf no toque nada.
+  # resolv.conf lo pones del host
   networking.resolvconf.enable = false;
 
+  # --- Base de datos y Redis ---
   services.mysql = {
     enable = true;
     package = pkgs.mariadb;
-    settings.mysqld = { bind-address = "127.0.0.1"; skip-networking = false; };
+    settings.mysqld = {
+      bind-address = "127.0.0.1";
+      skip-networking = false;
+      innodb_buffer_pool_size = "256M";
+      innodb_log_file_size = "128M";
+    };
     initialScript = pteroInitSQL;
   };
 
@@ -52,8 +67,13 @@ in
   services.redis.servers."".bind   = "127.0.0.1";
   services.redis.servers."".port   = 6379;
 
+  # --- Nginx (puerto interno 8081) ---
   services.nginx = {
     enable = true;
+    recommendedProxySettings = true;
+    recommendedTlsSettings = false;
+    recommendedGzipSettings = true;
+
     virtualHosts."_" = {
       default = true;
       root = "${webRoot}/public";
@@ -65,29 +85,50 @@ in
         client_max_body_size 100m;
         client_body_timeout 120s;
         sendfile off;
+
+        # Seguridad básica
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header X-XSS-Protection "1; mode=block" always;
       '';
-      locations."/" = { tryFiles = "$uri $uri/ /index.php?$query_string"; };
-      locations."~ \\.php$" = {
-        extraConfig = ''
-          fastcgi_split_path_info ^(.+\.php)(/.+)$;
-          fastcgi_pass unix:${phpSock};
-          fastcgi_index index.php;
-          include ${pkgs.nginx}/conf/fastcgi_params;
-          fastcgi_param PHP_VALUE "upload_max_filesize = 100M \n post_max_size=100M";
-          fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-          fastcgi_param HTTP_PROXY "";
-          fastcgi_intercept_errors off;
-          fastcgi_buffer_size 16k;
-          fastcgi_buffers 4 16k;
-          fastcgi_connect_timeout 300;
-          fastcgi_send_timeout 300;
-          fastcgi_read_timeout 300;
-        '';
+      locations = {
+        "/" = { tryFiles = "$uri $uri/ /index.php?$query_string"; };
+
+        # FastCGI PHP
+        "~ \\.php$" = {
+          extraConfig = ''
+            fastcgi_split_path_info ^(.+\.php)(/.+)$;
+            fastcgi_pass unix:${phpSock};
+            fastcgi_index index.php;
+            include ${pkgs.nginx}/conf/fastcgi_params;
+            fastcgi_param PHP_VALUE "upload_max_filesize = 100M \n post_max_size=100M";
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            fastcgi_param HTTP_PROXY "";
+            fastcgi_intercept_errors off;
+            fastcgi_buffer_size 32k;
+            fastcgi_buffers 8 32k;
+            fastcgi_connect_timeout 300;
+            fastcgi_send_timeout 300;
+            fastcgi_read_timeout 300;
+          '';
+        };
+
+        # Bloquear dotfiles
+        "~ /\\." = { extraConfig = "deny all;"; };
+
+        # Health
+        "/healthz" = {
+          extraConfig = ''
+            default_type text/plain;
+            return 200 "ok\n";
+          '';
+        };
       };
-      locations."~ /\\." = { extraConfig = "deny all;"; };
     };
   };
 
+  # --- PHP-FPM ---
   services.phpfpm.pools.pterodactyl = {
     user = "nginx";
     group = "nginx";
@@ -98,12 +139,22 @@ in
       "listen.group" = "nginx";
       "pm" = "dynamic";
       "pm.max_children" = 32;
-      "pm.start_servers" = 2;
-      "pm.min_spare_servers" = 1;
-      "pm.max_spare_servers" = 5;
+      "pm.start_servers" = 3;
+      "pm.min_spare_servers" = 2;
+      "pm.max_spare_servers" = 6;
+      "php_admin_value[opcache.enable]" = "1";
+      "php_admin_value[opcache.memory_consumption]" = "128";
+      "php_admin_value[opcache.validate_timestamps]" = "1";
+      "php_admin_value[opcache.interned_strings_buffer]" = "16";
+      "php_admin_value[date.timezone]" = "Europe/Madrid";
+      "php_admin_value[upload_max_filesize]" = "100M";
+      "php_admin_value[post_max_size]" = "100M";
+      "php_admin_value[memory_limit]" = "512M";
+      "php_admin_value[max_execution_time]" = "120";
     };
   };
 
+  # --- Bootstrap idempotente del panel ---
   systemd.services.ptero-bootstrap = {
     description = "Bootstrap de Pterodactyl (idempotente)";
     wantedBy = [ "multi-user.target" ];
@@ -112,6 +163,7 @@ in
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
+
       Environment = [
         "NODE_OPTIONS=--openssl-legacy-provider"
         "HOME=/root"
@@ -119,35 +171,50 @@ in
         "PATH=${webRoot}/node_modules/.bin:/run/current-system/sw/bin"
       ];
       WorkingDirectory = webRoot;
+
+      # Cargamos la contraseña desde /etc/secrets/ptero-db.pass (fuera del Nix store)
+      LoadCredential = [ "dbpass:${dbPassCredPath}" ];
     };
-    path = [ pkgs.git pkgs.curl pkgs.gnutar pkgs.coreutils pkgs.gnused pkgs.gnugrep nodejs pkgs.yarn myPhp pkgs.phpPackages.composer pkgs.mariadb ];
+    path = with pkgs; [ git curl gnutar coreutils gnused gnugrep nodejs yarn myPhp phpPackages.composer mariadb ];
     script = ''
       set -euo pipefail
       WEBROOT="${webRoot}"
+
+      # Credenciales de systemd
+      DBPASS="$(cat "$CREDENTIALS_DIRECTORY/dbpass" 2>/dev/null || true)"
+      [ -z "${DBPASS:-}" ] && DBPASS="changeme"
+
       if [ ! -d "$WEBROOT" ]; then
         echo "[ptero] Clonando panel…"
         mkdir -p "$(dirname "$WEBROOT")"
         ${pkgs.git}/bin/git clone --depth=1 https://github.com/pterodactyl/panel.git "$WEBROOT"
         cd "$WEBROOT"
+
         echo "[ptero] Composer (prod)…"
         cp .env.example .env
         ${pkgs.phpPackages.composer}/bin/composer install --no-dev --optimize-autoloader
-        echo "[ptero] Config .env…"
+
+        echo "[ptero] Key + entorno…"
         ${myPhp}/bin/php artisan key:generate
         ${myPhp}/bin/php artisan p:environment:setup \
           --author="carlos.clement.bellido@gmail.com" \
           --url="https://${pteroDomain}" \
           --timezone="Europe/Madrid" \
           --cache="redis" --session="redis" --queue="redis"
+
         ${myPhp}/bin/php artisan p:environment:database \
           --host=127.0.0.1 --port=3306 \
-          --database=pterodactyl --username=ptero --password=changeme
+          --database=pterodactyl --username=ptero --password="$DBPASS"
+
         ${myPhp}/bin/php artisan p:environment:mail --driver=log
+
+        # App URL y proxies de confianza
         sed -i '/^APP_URL=/d' .env
         echo "APP_URL=https://${pteroDomain}" >> .env
         if ! grep -q '^TRUSTED_PROXIES=' .env; then
-          echo "TRUSTED_PROXIES=127.0.0.1,192.168.104.1" >> .env
+          echo "TRUSTED_PROXIES=127.0.0.1/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16" >> .env
         fi
+
         echo "[ptero] Migraciones + seed…"
         ${myPhp}/bin/php artisan migrate --seed --force
       else
@@ -157,10 +224,12 @@ in
           ${pkgs.phpPackages.composer}/bin/composer install --no-dev --optimize-autoloader
         fi
       fi
+
       echo "[ptero] Build frontend…"
       ( ${pkgs.yarn}/bin/yarn install --frozen-lockfile || ${pkgs.yarn}/bin/yarn install )
       ${pkgs.yarn}/bin/yarn run build:production
       ls public/assets/bundle.*.js >/dev/null 2>&1 || { echo "No se generaron assets"; exit 1; }
+
       echo "[ptero] Permisos y cachés…"
       chown -R nginx:nginx "$WEBROOT"
       chmod -R 755 "$WEBROOT"/storage/* "$WEBROOT"/bootstrap/cache/ || true
@@ -168,15 +237,16 @@ in
       ${myPhp}/bin/php artisan route:clear || true
       ${myPhp}/bin/php artisan config:clear || true
       ${myPhp}/bin/php artisan config:cache
+
       echo "[ptero] Bootstrap OK."
     '';
   };
 
+  # --- Queue worker ---
   systemd.services.pteroq = {
     description = "Pterodactyl Queue Worker";
-    after = [ "redis.service" ];
+    after = [ "redis.service" "ptero-bootstrap.service" ];
     wantedBy = [ "multi-user.target" ];
-    # Estas dos opciones deben ir en [Unit]
     unitConfig = {
       StartLimitIntervalSec = 180;
       StartLimitBurst = 30;
@@ -185,7 +255,7 @@ in
       User = "nginx";
       Group = "nginx";
       Restart = "always";
-      ExecStart = "${myPhp}/bin/php ${webRoot}/artisan queue:work --queue=high,standard,low --sleep=3 --tries=3 -vvv";
+      ExecStart = "${myPhp}/bin/php ${webRoot}/artisan queue:work --queue=high,standard,low --sleep=3 --tries=3 --timeout=120 -vvv";
       RestartSec = 5;
       WorkingDirectory = webRoot;
       StandardOutput = "journal";
@@ -194,6 +264,7 @@ in
     };
   };
 
+  # --- Scheduler (cada minuto) ---
   systemd.services.ptero-schedule = {
     description = "Run Laravel scheduler for Pterodactyl";
     serviceConfig = {
@@ -209,40 +280,22 @@ in
     timerConfig = { OnCalendar = "*:0/1"; Persistent = true; };
   };
 
-  # Docker dentro del contenedor
+  # --- Docker dentro del contenedor (para Wings) ---
   virtualisation.docker.enable = true;
   virtualisation.docker.autoPrune.enable = true;
+  virtualisation.docker.daemon.settings = {
+    storage-driver = "vfs";
+    exec-opts = [ "native.cgroupdriver=systemd" ];
+  };
 
   systemd.services.docker.serviceConfig.CapabilityBoundingSet = [
-    "CAP_CHOWN"
-    "CAP_DAC_OVERRIDE"
-    "CAP_DAC_READ_SEARCH"
-    "CAP_FOWNER"
-    "CAP_FSETID"
-    "CAP_KILL"
-    "CAP_SETGID"
-    "CAP_SETUID"
-    "CAP_SETPCAP"
-    "CAP_LINUX_IMMUTABLE"
-    "CAP_NET_BIND_SERVICE"
-    "CAP_NET_BROADCAST"
-    "CAP_NET_ADMIN"
-    "CAP_NET_RAW"
-    "CAP_IPC_OWNER"
-    "CAP_SYS_CHROOT"
-    "CAP_SYS_PTRACE"
-    "CAP_SYS_ADMIN"
-    "CAP_SYS_BOOT"
-    "CAP_SYS_NICE"
-    "CAP_SYS_RESOURCE"
-    "CAP_SYS_TTY_CONFIG"
-    "CAP_MKNOD"
-    "CAP_LEASE"
-    "CAP_AUDIT_WRITE"
-    "CAP_AUDIT_CONTROL"
-    "CAP_SETFCAP"
+    "CAP_CHOWN" "CAP_DAC_OVERRIDE" "CAP_DAC_READ_SEARCH" "CAP_FOWNER" "CAP_FSETID"
+    "CAP_KILL" "CAP_SETGID" "CAP_SETUID" "CAP_SETPCAP" "CAP_LINUX_IMMUTABLE"
+    "CAP_NET_BIND_SERVICE" "CAP_NET_BROADCAST" "CAP_NET_ADMIN" "CAP_NET_RAW"
+    "CAP_IPC_OWNER" "CAP_SYS_CHROOT" "CAP_SYS_PTRACE" "CAP_SYS_ADMIN" "CAP_SYS_BOOT"
+    "CAP_SYS_NICE" "CAP_SYS_RESOURCE" "CAP_SYS_TTY_CONFIG" "CAP_MKNOD" "CAP_LEASE"
+    "CAP_AUDIT_WRITE" "CAP_AUDIT_CONTROL" "CAP_SETFCAP"
   ];
-
   systemd.services.docker.serviceConfig = {
     NoNewPrivileges = false;
     SystemCallFilter = "";
@@ -262,10 +315,12 @@ in
     "net.bridge.bridge-nf-call-ip6tables" = 1;
   };
 
+  # --- Firewall interno del contenedor ---
   networking.firewall.enable = true;
   networking.firewall.allowedTCPPorts = [ 8080 8081 2022 25565 ];
   networking.firewall.allowedUDPPorts = [ 25565 ];
 
+  # --- Usuarios y paths Wings ---
   users.groups.wings = { };
   users.users.wings = {
     isSystemUser = true;
@@ -275,7 +330,6 @@ in
     extraGroups = [ "docker" ];
   };
   environment.etc."usr/sbin/nologin".source = "${pkgs.shadow}/bin/nologin";
-
   users.users.pterodactyl = {
     isSystemUser = true;
     home = "/var/lib/pterodactyl";
@@ -284,13 +338,16 @@ in
     shell = "${pkgs.shadow}/bin/nologin";
   };
 
+  # --- Dir y secretos ---
   systemd.tmpfiles.rules = [
     "d /var/lib/pterodactyl 0750 wings wings - -"
     "d /var/lib/pterodactyl/logs 0750 wings wings - -"
     "d /etc/pterodactyl 0755 root root - -"
     "d /var/log/pterodactyl 0750 wings wings - -"
+    "d ${secretsDir} 0700 root root - -"
   ];
 
+  # --- Wings: descarga + servicio ---
   systemd.services."wings-download" = {
     description = "Fetch Wings binary if missing";
     wantedBy = [ "multi-user.target" ];
@@ -329,13 +386,19 @@ in
       TimeoutStartSec = 120;
       StandardOutput = "journal";
       StandardError  = "journal";
-      Environment="TZ=Europe/Madrid";
+      Environment = "TZ=Europe/Madrid";
     };
   };
 
-  virtualisation.docker.daemon.settings = {
-    storage-driver = "vfs";
-    exec-opts = [ "native.cgroupdriver=systemd" ];
+  # --- Logrotate para Nginx y Pterodactyl ---
+  services.logrotate.enable = true;
+  services.logrotate.settings = {
+    "/var/log/nginx/pterodactyl.*.log" = {
+      rotate = 7; daily = true; compress = true; missingok = true; notifempty = true; create = "0640 nginx nginx";
+    };
+    "/var/log/pterodactyl/*.log" = {
+      rotate = 7; daily = true; compress = true; missingok = true; notifempty = true; create = "0640 wings wings";
+    };
   };
 
   system.stateVersion = "24.05";

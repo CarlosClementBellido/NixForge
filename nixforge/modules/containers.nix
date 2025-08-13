@@ -78,36 +78,5 @@
       isReadOnly = true;
     };
   };
-  
-  systemd.services."container@pterodactyl" = {
-    serviceConfig = {
-      KeyringMode = "inherit";
-      SystemCallFilter = "";
-      NoNewPrivileges = false;
-    };
-    environment.SYSTEMD_NSPAWN_UNIFIED_HIERARCHY = "1";
-  };
-
-  environment.etc."systemd/nspawn/pterodactyl.nspawn".text = ''
-    [Exec]
-    # Permitir syscalls de keyring y bpf para Docker/Containerd
-    SystemCallFilter=add_key keyctl bpf
-  '';
-
-  # Usa nspawn sin -U a nivel global (como ya lo tenías)
-  systemd.services."systemd-nspawn@".serviceConfig.ExecStart = lib.mkForce [
-    ""
-    "systemd-nspawn --quiet --keep-unit --boot --link-journal=try-guest --network-veth --settings=override --machine=%i"
-  ];
-  
-  systemd.services."systemd-nspawn@".serviceConfig = {
-    PrivateUsers = false;
-    NoNewPrivileges = false;
-    KeyringMode = "inherit";
-    ProtectControlGroups = false;
-    ProtectKernelModules = false;
-    ProtectKernelTunables = false;
-    RestrictNamespaces = "";
-  };
 
 }
