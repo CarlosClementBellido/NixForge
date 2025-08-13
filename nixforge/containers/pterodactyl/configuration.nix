@@ -14,10 +14,23 @@ let
     GRANT ALL PRIVILEGES ON pterodactyl.* TO 'ptero'@'127.0.0.1' WITH GRANT OPTION;
     FLUSH PRIVILEGES;
   '';
+
+  runcWrapped = pkgs.writeShellScriptBin "runc-wrapped" ''
+    #!/bin/sh
+    subcmd="$1"
+    case "$subcmd" in
+      create|run|exec)
+        exec ${pkgs.runc}/bin/runc --no-new-keyring "$@"
+        ;;
+      *)
+        exec ${pkgs.runc}/bin/runc "$@"
+        ;;
+    esac
+  '';
 in
 {
   environment.systemPackages = [
-    pkgs.git pkgs.curl pkgs.wget pkgs.unzip pkgs.bash pkgs.coreutils pkgs.shadow
+    pkgs.git pkgs.curl pkgs.wget pkgs.unzip pkgs.bash pkgs.coreutils pkgs.shadow pkgs.iptables 
     pkgs.gnutar pkgs.gnugrep pkgs.gnused pkgs.gzip
     pkgs.mariadb pkgs.redis
     nodejs pkgs.yarn
@@ -229,10 +242,18 @@ in
     "CAP_AUDIT_CONTROL"
     "CAP_SETFCAP"
   ];
-  systemd.services.docker.serviceConfig.AmbientCapabilities = [
-    "CAP_NET_ADMIN"
-    "CAP_NET_RAW"
-  ];
+
+  systemd.services.docker.serviceConfig = {
+    NoNewPrivileges = false;
+    SystemCallFilter = "";
+    AmbientCapabilities = [ "CAP_NET_ADMIN" "CAP_NET_RAW" "CAP_SYS_ADMIN" ];
+    PrivateUsers = false;
+    ProtectKernelTunables = false;
+    ProtectKernelModules = false;
+    ProtectControlGroups = false;
+    RestrictNamespaces = "";
+    KeyringMode = "inherit";
+  };
 
   boot.kernelModules = [ "br_netfilter" ];
   boot.kernel.sysctl = {
@@ -315,8 +336,6 @@ in
   virtualisation.docker.daemon.settings = {
     storage-driver = "vfs";
     exec-opts = [ "native.cgroupdriver=systemd" ];
-    # Quitar runtimes personalizados:
-    # (sin "runtimes" ni "default-runtime")
   };
 
   system.stateVersion = "24.05";

@@ -72,7 +72,27 @@
       "--capability=all"
       "--bind-ro=/var/lib/nixos/static-dns/resolv.conf:/etc/resolv.conf"
     ];
+
+    bindMounts."/etc/resolv.conf" = {
+      hostPath = "/var/lib/nixos/static-dns/resolv.conf";
+      isReadOnly = true;
+    };
   };
+  
+  systemd.services."container@pterodactyl" = {
+    serviceConfig = {
+      KeyringMode = "inherit";
+      SystemCallFilter = "";
+      NoNewPrivileges = false;
+    };
+    environment.SYSTEMD_NSPAWN_UNIFIED_HIERARCHY = "1";
+  };
+
+  environment.etc."systemd/nspawn/pterodactyl.nspawn".text = ''
+    [Exec]
+    # Permitir syscalls de keyring y bpf para Docker/Containerd
+    SystemCallFilter=add_key keyctl bpf
+  '';
 
   # Usa nspawn sin -U a nivel global (como ya lo tenías)
   systemd.services."systemd-nspawn@".serviceConfig.ExecStart = lib.mkForce [
