@@ -1,3 +1,5 @@
 hardware-configuration.nix
 *.cred
 *.pass
+*.key
+gcp-sa.json

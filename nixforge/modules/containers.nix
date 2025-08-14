@@ -79,4 +79,30 @@
     };
   };
 
+  containers.tonto = {
+    autoStart = true;
+    privateNetwork = true;
+    hostAddress = "192.168.105.1";
+    localAddress = "192.168.105.2";
+    config = import ../containers/tonto/configuration.nix;
+
+    # Igual que pterodactyl: forzamos /etc/resolv.conf desde el host
+    extraFlags = [
+      "--bind-ro=/var/lib/nixos/static-dns/resolv.conf:/etc/resolv.conf"
+    ];
+
+    bindMounts."/etc/resolv.conf" = {
+      hostPath = "/var/lib/nixos/static-dns/resolv.conf";
+      isReadOnly = true;
+    };
+
+    # (ya lo tienes) monta la credencial GCP:
+    bindMounts."/etc/secrets/gcp-sa.json" = 
+    { 
+      hostPath = "/etc/nixos/nixforge/containers/tonto/gcp-sa.json"; 
+      isReadOnly = true; 
+    };
+  };
+
+
 }
