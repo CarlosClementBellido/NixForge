@@ -16,6 +16,7 @@
       ./modules/metrics-host.nix
       ./modules/environment.nix
       ./modules/systemd.nix
+      ./modules/audio.nix
     ];
 
   system.stateVersion = "24.05";

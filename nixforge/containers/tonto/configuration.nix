@@ -50,12 +50,6 @@ in
         ${pythonEnv}/bin/python -m venv "${venvPath}"
       fi
 
-      # asegúrate de tener pip/wheel/setuptools actualizados
-      "${venvPath}/bin/pip" install --no-cache-dir --upgrade pip wheel setuptools
-
-      # instala deps necesarias dentro del venv (idempotente)
-      "${venvPath}/bin/pip" install --no-cache-dir google-genai fastapi uvicorn
-
       echo "[tonto-venv] OK"
     '';
   };
@@ -87,6 +81,24 @@ in
       ExecStart = "${venvPath}/bin/uvicorn app:app --host 0.0.0.0 --port 8088";
       Restart = "on-failure";
     };
+  };
+
+  systemd.services.tonto-pip = {
+    description = "Install/upgrade Python deps (deferred)";
+    after = [ "network-online.target" "tonto.service" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = { Type = "oneshot"; WorkingDirectory = "/"; };
+    path = [ pythonEnv pkgs.cacert ];
+    script = ''
+      set -euo pipefail
+      "${venvPath}/bin/pip" install --no-cache-dir --upgrade pip wheel setuptools
+      "${venvPath}/bin/pip" install --no-cache-dir google-genai fastapi uvicorn
+    '';
+  };
+
+  systemd.timers.tonto-pip = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = { OnBootSec = "1min"; Persistent = true; };
   };
 
   system.stateVersion = "24.05";

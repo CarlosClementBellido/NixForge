@@ -86,6 +86,8 @@
     localAddress = "192.168.105.2";
     config = import ../containers/tonto/configuration.nix;
 
+    timeoutStartSec = "5min";
+
     # Igual que pterodactyl: forzamos /etc/resolv.conf desde el host
     extraFlags = [
       "--bind-ro=/var/lib/nixos/static-dns/resolv.conf:/etc/resolv.conf"
