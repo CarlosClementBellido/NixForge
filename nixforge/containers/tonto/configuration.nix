@@ -18,8 +18,20 @@ in
   networking.firewall.enable = true;
   networking.firewall.allowedTCPPorts = [ 8088 ];
 
-  environment.systemPackages = with pkgs; [ pythonEnv cacert curl jq ];
+  environment.systemPackages = with pkgs; [
+    pythonEnv cacert curl jq
+    espeak-ng               # TTS offline
+    pulseaudio              # para paplay (cliente PA)
+    alsa-utils              # aplay como fallback
+    coreutils
+    mbrola
+  ];
   environment.etc."tonto/app.py".text = builtins.readFile ./app.py;
+
+  environment.etc."pulse/client.conf".text = ''
+    default-server = tcp:192.168.105.1:4713
+    autospawn = no
+  '';
 
   systemd.tmpfiles.rules = [
     "d /etc/secrets 0755 root root -"
@@ -67,9 +79,12 @@ in
       Environment = [
         # Si no lo defines, app.py lo leerá del JSON:
         # "GCP_PROJECT_ID=TU_PROJECT_ID"
-        "GCP_LOCATION=global"
+        "GCP_LOCATION=europe-southwest1"
         "GOOGLE_APPLICATION_CREDENTIALS=/etc/secrets/gcp-sa.json"
         "PYTHONUNBUFFERED=1"
+        "GEMINI_MODEL=gemini-2.5-flash-lite"
+
+        "PULSE_SERVER=tcp:192.168.105.1:4713"
       ];
 
       # Comprobaciones rápidas

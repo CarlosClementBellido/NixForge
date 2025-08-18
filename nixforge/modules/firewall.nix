@@ -3,7 +3,7 @@
 {
   networking.firewall = {
     enable = true;
-    allowedTCPPorts = [ 8096 9091 51413 80 443 25565 8080 2022 8081 ];
+    allowedTCPPorts = [ 8096 9091 51413 80 443 25565 8080 2022 8081 4713 ];
     allowedUDPPorts = [ 51413 25565 ];
     trustedInterfaces = [ "enp2s0f1" "enp4s0" ];
     extraCommands = ''
