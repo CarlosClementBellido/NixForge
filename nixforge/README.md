@@ -47,7 +47,7 @@ If you want to import only certain modules, in yout `nixforge.nix` comment the o
 
 ## Managing Containers
 
-- Build and switch the host: `sudo nixos-rebuild switch --flake .`
+- Build and switch the host: `sudo nixos-rebuild switch`
 - List containers: `machinectl list`
 - Inspect logs: `journalctl -M <name> -u <unit> -b -n 200 -o cat`
 - Shell into a container: `sudo machinectl shell <name>`

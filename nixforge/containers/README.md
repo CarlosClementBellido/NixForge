@@ -12,10 +12,10 @@ upgrades and make troubleshooting cleaner.
 
 ## Secrets
 
-Each container that needs secrets has a `*.cred.example`. Copy to its non‑example filename and fill
-your values. Ensure the real `*.cred` files are **git‑ignored**.
+Each container that needs secrets has a `*.cred.example`, `*.key.example` or `gcp-sa.json` (for `Tonto`). Copy to its non‑example filename and fill
+your values. Ensure the real `*.cred`, `*.key` and `gcp-sa.json` files are **git‑ignored**.
 
 ## Network
 
-Containers usually live on a private bridge and are reverse‑proxied from the host via Nginx.
+Containers are reverse‑proxied from the host via Nginx.
 Expose only what’s necessary; prefer internal communication.

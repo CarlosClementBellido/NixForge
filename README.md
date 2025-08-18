@@ -3,6 +3,7 @@
 NixForge is a modular, **declarative NixOS** infrastructure intended to run on a single host.
 It turns your NixOS machine into a **router + media + gaming + utilities** server using
 isolated NixOS containers and reusable Nix modules.
+Every container is managed by Nginx under a domain so please be sure to replace the domain used in the containers with yours.
 
 ## Highlights
 
