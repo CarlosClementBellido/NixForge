@@ -60,6 +60,17 @@ sudo machinectl shell <container-name>
 | tonto           | Voice/AI assistant (FastAPI + Vertex AI + Piper)  |
 | transmission    | BitTorrent client with web UI                     |
 
+## Hardware used
+
+  * [MOUGOl X99 dual intel Xeon E5 2680 V4 + DDR4 64GB (4*16GB) LGA2011-3 M.2 NVME](https://es.aliexpress.com/item/1005008694023094.html)
+  * [CPU cooler PWM](https://es.aliexpress.com/item/1005002733070463.html) x2
+  * [M2 SSD NVMe 256GB Goldenfir M.2 PCIe](https://es.aliexpress.com/item/1005005067841102.html)
+  * [X540-T2 Chipset Intel PCIe x8 10 Gbps PCIE-X8 X16](https://es.aliexpress.com/item/1005005968543474.html)
+  * [NVIDIA Quadro P620 2G](https://es.aliexpress.com/item/1005009411170416.html)
+  * [6W speakers](https://es.aliexpress.com/item/1005009173612075.html)
+  * [Conference microphone](https://es.aliexpress.com/item/1005006712859510.html)
+  * [T.F.SKYWINDINTL 1000W](https://es.aliexpress.com/item/1005007987735357.html)
+
 ## License
 
 MIT. See headers and individual folders for details.
