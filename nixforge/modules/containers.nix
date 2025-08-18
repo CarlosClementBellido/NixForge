@@ -66,9 +66,8 @@
     localAddress = "192.168.104.2";
     config = import ../containers/pterodactyl/configuration.nix;
 
-    # Evita userns (-U) y fija DNS del contenedor en solo lectura
     extraFlags = [
-      "--private-users=off"  # SIN userns
+      "--private-users=off"
       "--capability=all"
       "--bind-ro=/var/lib/nixos/static-dns/resolv.conf:/etc/resolv.conf"
     ];
@@ -88,7 +87,6 @@
 
     timeoutStartSec = "5min";
 
-    # Igual que pterodactyl: forzamos /etc/resolv.conf desde el host
     extraFlags = [
       "--bind-ro=/var/lib/nixos/static-dns/resolv.conf:/etc/resolv.conf"
     ];
@@ -98,7 +96,6 @@
       isReadOnly = true;
     };
 
-    # (ya lo tienes) monta la credencial GCP:
     bindMounts."/etc/secrets/gcp-sa.json" = 
     { 
       hostPath = "/etc/nixos/nixforge/containers/tonto/gcp-sa.json"; 

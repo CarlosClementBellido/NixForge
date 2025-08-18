@@ -15,6 +15,8 @@
     pulse.enable = true;
     jack.enable = true;
 
+    systemWide = true;
+
     configPackages = [
       (pkgs.writeTextDir "share/pipewire/pipewire-pulse.conf.d/99-tcp.conf" ''
         pulse.properties = {
