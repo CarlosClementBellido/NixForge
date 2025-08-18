@@ -23,6 +23,28 @@ In your `configuration.nix`:
 }
 ```
 
+If you want to import only certain modules, in yout `nixforge.nix` comment the ones that are not required:
+
+```nix
+  imports =
+    [
+      ./modules/system-packages.nix
+      ./modules/users.nix
+      ./modules/openssh.nix
+      ./modules/networking.nix
+      ./modules/firewall.nix
+      ./modules/dnsmasq.nix
+      ./modules/samba.nix
+      ./modules/nginx.nix
+      ./modules/containers.nix
+      ./modules/nix-ld.nix
+      ./modules/metrics-host.nix
+      ./modules/environment.nix
+      ./modules/systemd.nix
+      ./modules/audio.nix
+    ];
+```
+
 ## Managing Containers
 
 - Build and switch the host: `sudo nixos-rebuild switch --flake .`
