@@ -38,7 +38,7 @@ cd NixForge
 3) Build and switch:
 
 ```bash
-sudo nixos-rebuild switch --flake .
+sudo nixos-rebuild switch
 ```
 
 4) List and enter containers:
