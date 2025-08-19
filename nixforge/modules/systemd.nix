@@ -25,4 +25,14 @@
     ProtectKernelTunables = false;
     RestrictNamespaces = "";
   };
+
+  systemd.user.services."pipewire-pulse" = {
+    enable = true;
+    description = "PipeWire PulseAudio (always on)";
+    after = [ "pipewire.service" ];
+    serviceConfig = {
+      Restart = "always";
+    };
+    wantedBy = [ "default.target" ];
+  };
 }

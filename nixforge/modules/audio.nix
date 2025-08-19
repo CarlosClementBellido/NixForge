@@ -10,18 +10,21 @@
 
   services.pipewire = {
     enable = true;
+    wireplumber.enable = true;
+
+    # Usamos instancia de USUARIO (recomendado)
+    systemWide = false;
+
+    pulse.enable = true;
     alsa.enable = true;
     alsa.support32Bit = true;
-    pulse.enable = true;
     jack.enable = true;
-
-    systemWide = true;
 
     configPackages = [
       (pkgs.writeTextDir "share/pipewire/pipewire-pulse.conf.d/99-tcp.conf" ''
         pulse.properties = {
           server.address = [ "unix:native" "tcp:4713" ]
-          auth-anonymous = true
+          auth.anonymous = true
         }
       '')
     ];
