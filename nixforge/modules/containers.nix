@@ -101,6 +101,14 @@
       hostPath = "/etc/nixos/nixforge/containers/tonto/gcp-sa.json"; 
       isReadOnly = true; 
     };
+
+    bindMounts = {
+      "/dev/nvidia0".hostPath = "/dev/nvidia0";
+      "/dev/nvidiactl".hostPath = "/dev/nvidiactl";
+      "/dev/nvidia-uvm".hostPath = "/dev/nvidia-uvm";
+      "/dev/nvidia-uvm-tools".hostPath = "/dev/nvidia-uvm-tools";
+      "/run/opengl-driver".hostPath = "/run/opengl-driver"; # libs del driver
+    };
   };
 
 
