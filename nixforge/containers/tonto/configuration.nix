@@ -27,7 +27,6 @@ in
   networking.hostName = "tonto";
   systemd.network.wait-online.enable = true;
   networking.defaultGateway = "192.168.105.1";
-  #networking.resolvconf.enable = false;
 
   networking.firewall.enable = true;
   networking.firewall.allowedTCPPorts = [ 8088 ];
@@ -98,7 +97,7 @@ in
         "${pkgs.coreutils}/bin/test -r /etc/piper/models/es_ES-carlfm-x_low.onnx"
       ];
 
-      ExecStart = "${venvPath}/bin/uvicorn app:app --host 0.0.0.0 --port 8088 --timeout_keep_alive 120";
+      ExecStart = "${venvPath}/bin/uvicorn app:app --host 0.0.0.0 --port 8088 --timeout-keep-alive 120";
       Restart = "on-failure";
     };
   };

@@ -1,175 +1,153 @@
 { config, pkgs, lib, ... }:
 
 let
-  appDir    = "/etc/tonto";
-  venvDir   = "/var/lib/tonto/hotword-venv";
-  modelsDir = "/var/lib/tonto/models";   # cache HF/Whisper
-  owwCache  = "/var/lib/tonto/oww";      # cache OWW
-
-  py = pkgs.python3;
-
-  runtimeTools = with pkgs; [
-    bash coreutils findutils gnugrep gnused curl which
-    pulseaudio alsa-utils libsndfile glibc
-  ];
-
-  runtimeLibs = with pkgs; [
-    zlib                 # libz.so.1
-    stdenv.cc.cc.lib     # libstdc++.so.6
-    libsndfile           # libsndfile.so.*
-  ];
-
-  venvSetupScript = pkgs.writeShellScript "tonto-hotword-venv-setup.sh" ''
-    set -euo pipefail
-    VENV="${venvDir}"
-
-    echo "[venv] creando/actualizando entorno en $VENV"
-    if [ ! -x "$VENV/bin/python" ]; then
-      "${py}/bin/python" -m venv "$VENV"
-    fi
-
-    export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-    export PIP_INDEX_URL="https://pypi.org/simple"
-    export PIP_DEFAULT_TIMEOUT=60
-    export PIP_RETRIES=5
-
-    "$VENV/bin/python" -m pip install --upgrade pip wheel setuptools
-
-    echo "[venv] instalando numpy<2.0 …"
-    "$VENV/bin/pip" install --no-cache-dir --prefer-binary "numpy<2.0"
-
-    base_pkgs="soundfile tqdm scipy resampy requests faster-whisper"
-    for p in $base_pkgs; do
-      echo "[venv] instalando $p …"
-      "$VENV/bin/pip" install --no-cache-dir --prefer-binary "$p"
-    done
-
-    echo "[venv] instalando openwakeword==0.4.0 …"
-    "$VENV/bin/pip" install --no-cache-dir --prefer-binary "openwakeword==0.4.0"
-
-    echo "[venv] instalando (opcional) webrtcvad …"
-    if ! "$VENV/bin/pip" install --no-cache-dir --prefer-binary webrtcvad; then
-      echo "[venv] WARNING: webrtcvad no disponible (seguimos sin VAD)"
-    fi
-
-    set +e
-    TFL_OK=0
-    for ver in 2.14.0 2.12.0; do
-      echo "[venv] intentando tflite-runtime==$ver …"
-      if "$VENV/bin/pip" install --no-cache-dir --prefer-binary "tflite-runtime==$ver"; then
-        TFL_OK=1; break
-      fi
-    done
-    set -e
-    if [ "$TFL_OK" != "1" ]; then
-      echo "[venv] WARNING: no se pudo instalar tflite-runtime; OWW puede no funcionar."
-    fi
-
-    mkdir -p "${owwCache}" "${modelsDir}"
-    echo "[venv] listo."
-  '';
+  venvPath = "/var/lib/hotword/venv";
+  appDir   = "/etc/hotword";
 in
 {
-  # Unfree (NVIDIA/CUDA, etc.)
-  nixpkgs.config.allowUnfree = true;
-
-  environment.systemPackages = runtimeTools;
-
-  # Coloca tu script en el sistema leyendo tu fichero local:
-  # (ajusta la ruta si no está junto a este .nix)
-  environment.etc."tonto/hotword.py".text = builtins.readFile ./hotword.py;
-
-  # Directorios de estado
-  systemd.tmpfiles.rules = [
-    "d ${modelsDir} 0755 root root - -"
-    "d ${owwCache}  0755 root root - -"
-    "d ${venvDir}   0755 root root - -"
+  environment.systemPackages = with pkgs; [
+    alsa-utils
+    alsa-plugins
+    pulseaudio
+    portaudio
+    ffmpeg
+    cacert
   ];
 
-  # VENV (pip)
-  systemd.services."tonto-hotword-venv" = {
-    description = "Preparar venv para Tonto Hotword (OWW 0.4 + Whisper)";
+  environment.etc."hotword/hotword.py".text = builtins.readFile ./hotword.py;
+
+  environment.etc."openwakeword/.keep".text = "";
+
+  environment.etc."asound.conf".text = ''
+    pcm.!default {
+      type pulse
+      fallback "sysdefault"
+      hint.description "PulseAudio Sound Server"
+    }
+    ctl.!default {
+      type pulse
+      fallback "sysdefault"
+    }
+  '';
+
+  environment.etc."pulse/client.conf".text = ''
+    default-server = tcp:192.168.105.1:4713
+    autospawn = no
+  '';
+
+  systemd.services.hotword-venv-setup = {
+    description = "Prepare venv for Hotword (RealtimeSTT + optional OpenWakeWord models)";
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
 
-    path = runtimeTools ++ [ pkgs.gcc pkgs.pkg-config pkgs.which ];
+    path = [
+      pkgs.coreutils pkgs.bash pkgs.python3 pkgs.pkg-config
+      pkgs.portaudio pkgs.alsa-lib pkgs.alsa-plugins pkgs.pulseaudio
+      pkgs.gcc pkgs.stdenv.cc.cc.lib pkgs.zlib pkgs.libffi
+      pkgs.python3Packages.virtualenv
+    ];
 
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-
-      ExecStartPre = "${pkgs.curl}/bin/curl -sSfI --connect-timeout 10 https://pypi.org/simple/";
-      ExecStart = venvSetupScript;
-
       Environment = [
-        "OPENWAKEWORD_CACHE_DIR=${owwCache}"
-        "XDG_CACHE_HOME=${owwCache}"
-        "PIP_INDEX_URL=https://pypi.org/simple"
-        "PIP_DEFAULT_TIMEOUT=60"
-        "PIP_RETRIES=5"
-        "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-        "LD_LIBRARY_PATH=${lib.makeLibraryPath runtimeLibs}"
-        "CC=${pkgs.gcc}/bin/gcc"
+        "HOME=/root"
+        "PIP_DISABLE_PIP_VERSION_CHECK=1"
+        "PIP_NO_CACHE_DIR=1"
+        "CFLAGS=-I${pkgs.portaudio}/include -I${pkgs.alsa-lib}/include"
+        "LDFLAGS=-L${pkgs.portaudio}/lib -L${pkgs.alsa-lib}/lib"
+        "PKG_CONFIG_PATH=${pkgs.portaudio}/lib/pkgconfig:${pkgs.alsa-lib}/lib/pkgconfig"
+        "ALSA_PLUGIN_DIR=${pkgs.alsa-plugins}/lib/alsa-lib"
+        "ALSA_CONFIG_PATH=/etc/asound.conf"
+        "LD_LIBRARY_PATH=${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.zlib}/lib:${pkgs.libffi}/lib:${pkgs.pulseaudio}/lib"
       ];
     };
+
+    script = ''
+      set -euo pipefail
+
+      # Si existe pero sin pip, rehacer
+      if [ -x "${venvPath}/bin/python" ] && ! "${venvPath}/bin/python" -c "import pip" >/dev/null 2>&1; then
+        echo "[hotword-venv] venv sin pip; recreando…"
+        rm -rf "${venvPath}"
+      fi
+
+      if [ ! -x "${venvPath}/bin/python" ]; then
+        echo "[hotword-venv] creando venv con virtualenv en ${venvPath}"
+        virtualenv -p ${pkgs.python3}/bin/python "${venvPath}"
+      fi
+
+      if [ ! -f "${venvPath}/.realtimestt_ok" ]; then
+        echo "[hotword-venv] instalando RealtimeSTT + backends"
+        "${venvPath}/bin/pip" install --upgrade pip
+        # Nota: torch/torchaudio CPU/GPU se ajustan más tarde si quieres CUDA.
+        "${venvPath}/bin/pip" install RealtimeSTT openwakeword onnxruntime numpy requests pyaudio
+        touch "${venvPath}/.realtimestt_ok"
+      fi
+
+      echo "[hotword-venv] descargando modelos OpenWakeWord (opcional)…"
+      "${venvPath}/bin/python" - <<'PYCODE'
+import os, shutil, pathlib
+print("[oww] download_models()…", flush=True)
+try:
+    import openwakeword
+    openwakeword.utils.download_models()
+except Exception as e:
+    print(f"[oww] WARNING: fallo al descargar modelos OWW: {e}")
+
+home = os.environ.get("HOME") or "/root"
+cache = pathlib.Path(home) / ".cache" / "openwakeword"
+dst   = pathlib.Path("/etc/openwakeword")
+dst.mkdir(parents=True, exist_ok=True)
+
+# Si alguna vez guardas un modelo custom 'tonto.onnx' en la caché, se copiará:
+for p in cache.rglob("*.onnx"):
+    name = p.name.lower()
+    if "tonto" in name and not (dst / "tonto.onnx").exists():
+        print(f"[oww] copiando modelo custom: {p}", flush=True)
+        shutil.copy2(p, dst / "tonto.onnx")
+# No hay jarvis oficial en OWW; no es error si no aparece.
+PYCODE
+
+      echo "[hotword-venv] listo."
+    '';
   };
 
-  # Servicio principal
-  systemd.services."tonto-hotword" = {
-    description = "Tonto Hotword + ASR (Whisper) con VAD; fallback si OWW no está";
+  systemd.services.hotword = {
+    description = "Hotword Listener (Porcupine 'jarvis' by default; OWW optional)";
     wantedBy = [ "multi-user.target" ];
-    after  = [ "network-online.target" "tonto-hotword-venv.service" ];
-    wants  = [ "network-online.target" "tonto-hotword-venv.service" ];
+    after = [ "network-online.target" "hotword-venv-setup.service" "sound.target" ];
+    wants = [ "network-online.target" "hotword-venv-setup.service" ];
 
-    path = runtimeTools;
+    path = [
+      pkgs.coreutils pkgs.bash pkgs.alsa-utils
+      pkgs.alsa-plugins pkgs.pulseaudio
+      pkgs.stdenv.cc.cc.lib pkgs.zlib pkgs.libffi
+    ];
+
+    environment = {
+      PULSE_SERVER       = "tcp:192.168.105.1:4713";
+      PULSE_SOURCE       = "alsa_input.pci-0000_00_1b.0.analog-stereo";
+      USE_PORCUPINE_PIPE = "1";
+      WAKEWORDS          = "jarvis,computer,alexa";
+      WAKEWORD_SENS      = "0.8";
+      WAKEWORD_GAIN      = "1.0";
+      ASSISTANT_URL      = "http://localhost:8088/speak";
+      WHISPER_MODEL      = "small";
+      WHISPER_DEVICE     = "cuda";
+      ALSA_PLUGIN_DIR    = "${pkgs.alsa-plugins}/lib/alsa-lib";
+      ALSA_CONFIG_PATH   = "/etc/asound.conf";
+      LD_LIBRARY_PATH    = "${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.zlib}/lib:${pkgs.libffi}/lib:${pkgs.pulseaudio}/lib";
+    };
+
 
     serviceConfig = {
       Type = "simple";
       WorkingDirectory = appDir;
-      ExecStart = "${venvDir}/bin/python ${appDir}/hotword.py";
-      Restart = "always";
-      RestartSec = "2s";
-
-      Environment = [
-        # Hotwords / sensibilidad
-        "HOTWORDS=tonto,oye tonto,ok tonto"
-        "WAKE_SENSITIVITY=0.55"
-
-        # VAD / ventanas
-        "VAD_AGGRESSIVENESS=1"
-        "SILENCE_TIMEOUT=0.8"
-        "MAX_LISTEN_SECONDS=7"
-        "MIN_SPEECH_MS=350"
-        "COOLDOWN_AFTER_TRIGGER=2"
-        "COOLDOWN_AFTER_EMPTY=1"
-
-        # Whisper / caché
-        "ASR_MODEL=tiny"
-        "ASR_LANGUAGE=es"
-        "HF_HOME=${modelsDir}"
-
-        # Intenta CUDA; el Python hace fallback a CPU si falla
-        "FW_DEVICE=cuda"
-        "FW_COMPUTE_TYPE=int8_float16"
-
-        # OWW 0.4 por defecto (TFLite embebido en la wheel)
-        "OWW_BACKEND=tflite"
-        "OWW_ALLOW="
-        "OPENWAKEWORD_CACHE_DIR=${owwCache}"
-        "XDG_CACHE_HOME=${owwCache}"
-        "TFLITE_DISABLE_XNNPACK=1"
-
-        # Audio
-        "PULSE_SERVER=tcp:192.168.105.1:4713"
-
-        # Tu endpoint; cambia a TONTO_FIELD=text si tu API lo espera así
-        "TONTO_URL=http://127.0.0.1:8088/speak"
-        "TONTO_FIELD=question"
-
-        # Bibliotecas nativas necesarias (CUDA + libz/libstdc++/libsndfile)
-        "LD_LIBRARY_PATH=/run/opengl-driver/lib:${lib.makeLibraryPath runtimeLibs}"
-      ];
+      ExecStart = "${venvPath}/bin/python ${appDir}/hotword.py";
+      Restart = "on-failure";
+      RestartSec = 3;
     };
   };
 }

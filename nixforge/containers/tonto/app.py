@@ -97,6 +97,8 @@ The history is structured as follows:
   * [assistant] Assistant's response
   * [system] System prompt or instructions
 You cannot add [assistant] or [/assistant] or [user] or [/user] tags to your responses, this is managed by the system.
+If the user says incoherent things, you can reply saying that you didn't understood what they were saying.
+Bear in mind that the input you're receiving comes from speech-to-text, so use the history to try understand what the user tried to say, the speech-to-text may have transcripted wrongly
 """)
 
 class AskBody(BaseModel):

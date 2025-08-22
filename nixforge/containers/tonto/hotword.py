@@ -1,243 +1,362 @@
-import os
-import time
-import shlex
-import logging
-import subprocess
-from typing import Optional, List
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
-LOG = logging.getLogger("hotword")
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+import os, sys, time, wave, math, struct, subprocess
+from array import array
+from collections import deque
 
-# ---------- Config ----------
-WAKE_SENSITIVITY   = float(os.getenv("WAKE_SENSITIVITY", "0.55"))
-HOTWORDS           = [w.strip() for w in os.getenv("HOTWORDS", "tonto,oye tonto,ok tonto").split(",") if w.strip()]
+from faster_whisper import WhisperModel
 
-VAD_AGGRESSIVENESS = int(os.getenv("VAD_AGGRESSIVENESS", "2"))
-SILENCE_TIMEOUT    = float(os.getenv("SILENCE_TIMEOUT", "1.0"))
-MAX_LISTEN_SECONDS = float(os.getenv("MAX_LISTEN_SECONDS", "7"))
+import pyaudio
+from RealtimeSTT import AudioToTextRecorder
 
-COOLDOWN_AFTER_TRIGGER = float(os.getenv("COOLDOWN_AFTER_TRIGGER", "2"))
-COOLDOWN_AFTER_EMPTY   = float(os.getenv("COOLDOWN_AFTER_EMPTY", "2"))
+LANGUAGE        = "es"
+MODEL_SIZE      = os.environ.get("WHISPER_MODEL", "small")
+DEVICE          = os.environ.get("WHISPER_DEVICE", "cuda")
+ASSISTANT_URL   = os.environ.get("ASSISTANT_URL", "http://localhost:8088/speak")
+BACKEND_ENV     = os.environ.get("WAKEWORD_BACKEND", "pvporcupine").lower()
+USE_PAREC_PIPE  = os.environ.get("USE_PAREC_PIPE", "0") in ("1", "true", "yes")
+USE_PORCUPINE_PIPE = os.environ.get("USE_PORCUPINE_PIPE", "0") in ("1", "true", "yes")
+PULSE_SERVER    = os.environ.get("PULSE_SERVER", "tcp:192.168.105.1:4713")
+PULSE_SOURCE    = os.environ.get("PULSE_SOURCE", "")
 
-ASR_MODEL    = os.getenv("ASR_MODEL", "tiny")
-ASR_LANGUAGE = os.getenv("ASR_LANGUAGE", "es")
-HF_HOME      = os.getenv("HF_HOME", "/var/lib/tonto/models")
+KEYWORDS        = [kw.strip() for kw in os.environ.get("WAKEWORDS", "jarvis,computer,alexa").split(",") if kw.strip()]
+SENS            = float(os.environ.get("WAKEWORD_SENS", "0.95"))
+GAIN_LINEAR     = float(os.environ.get("WAKEWORD_GAIN", "2.0"))
 
-# OWW 0.4.x (tflite, modelos embebidos en la wheel)
-OWW_ALLOW    = [n.strip() for n in os.getenv("OWW_ALLOW","").split(",") if n.strip()]
+def log_env():
+    print("[hotword] ===== ENTORNO =====", flush=True)
+    print(f"PULSE_SERVER      = {PULSE_SERVER}", flush=True)
+    print(f"PULSE_SOURCE      = {PULSE_SOURCE or '(no definido)'}", flush=True)
+    print(f"ASSISTANT_URL     = {ASSISTANT_URL}", flush=True)
+    print(f"MODEL/DEVICE      = {MODEL_SIZE}/{DEVICE}", flush=True)
+    print(f"BACKEND           = {BACKEND_ENV}", flush=True)
+    print(f"USE_PAREC_PIPE    = {USE_PAREC_PIPE}", flush=True)
+    print(f"USE_PORCUPINE_PIPE= {USE_PORCUPINE_PIPE}", flush=True)
+    print(f"KEYWORDS          = {KEYWORDS}  sens={SENS}  gain={GAIN_LINEAR}x", flush=True)
+    print("[hotword] ===================", flush=True)
 
-# Faster-Whisper aceleración (si no hay CUDA, hacemos fallback automático)
-FW_DEVICE       = os.getenv("FW_DEVICE", "cpu")           # "cuda" o "cpu"
-FW_COMPUTE_TYPE = os.getenv("FW_COMPUTE_TYPE", "int8")    # en cuda: "int8_float16" suele ir bien
-
-TONTO_URL    = os.getenv("TONTO_URL", "http://127.0.0.1:8088/speak")
-TONTO_FIELD  = os.getenv("TONTO_FIELD", "question")       # o "text" según tu API
-
-# ---------- Lazy imports / globals ----------
-oww_model = None
-vad = None
-asr = None
-
-def _parec_cmd() -> List[str]:
-    return ["/run/current-system/sw/bin/parec", "--latency-msec=20", "--format=s16le", "--rate=16000", "--channels=1"]
-
-def _capture_pcm(seconds: float) -> bytes:
-    cmd = _parec_cmd()
-    LOG.info("[hotword] Iniciando captura de audio: %s", " ".join(shlex.quote(c) for c in cmd))
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+def gen_beep_wav(path="/tmp/wake_beep.wav", hz=880, dur=0.12, rate=16000, vol=0.6):
     try:
-        data = p.stdout.read(int(16000 * 2 * seconds))
-    finally:
-        p.kill()
-        p.wait()
-    return data
-
-def _beep():
-    """Pitido corto 1kHz ~80ms por PulseAudio (paplay) o ALSA (aplay)."""
-    try:
-        import numpy as np, soundfile as sf
-        from io import BytesIO
-        sr = 16000
-        dur = 0.08
-        t = np.arange(int(sr * dur)) / sr
-        wave = (0.2 * np.sin(2 * np.pi * 1000 * t)).astype("float32")
-        bio = BytesIO()
-        sf.write(bio, wave, sr, format="WAV", subtype="PCM_16")
-        data = bio.getvalue()
-        for cmd in (["/run/current-system/sw/bin/paplay", "-"],
-                    ["/run/current-system/sw/bin/aplay", "-q", "-"]):
-            try:
-                p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                p.stdin.write(data)
-                p.stdin.close()
-                p.wait(timeout=2)
-                return
-            except Exception:
-                continue
+        if os.path.exists(path): return path
+        n = int(rate * dur); frames = []
+        for i in range(n):
+            s = vol * math.sin(2.0 * math.pi * hz * (i / float(rate)))
+            frames.append(int(max(-1.0, min(1.0, s)) * 32767.0))
+        with wave.open(path, "wb") as wf:
+            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(rate)
+            wf.writeframes(struct.pack("<" + "h"*len(frames), *frames))
+        return path
     except Exception as e:
-        LOG.info("[hotword] beep falló: %r", e)
+        print(f"[hotword] beep wav error: {e}", flush=True); return None
 
-# ---------- OWW ----------
-def _init_oww():
-    global oww_model
+def play_beep():
     try:
-        # OWW 0.4.x: Model() sin args => tflite y modelos embebidos
-        from openwakeword.model import Model
-        oww_model = Model()
-        LOG.info("[hotword] OWW listo (0.4.x/TFLite, modelos embebidos)")
+        wav = gen_beep_wav()
+        if wav: subprocess.Popen(["aplay", "-q", wav])
     except Exception as e:
-        oww_model = None
-        LOG.info("[hotword] OWW no disponible: %r", e)
+        print(f"[hotword] beep error: {e}", flush=True)
 
-# ---------- VAD ----------
-def _init_vad():
-    global vad
-    try:
-        import webrtcvad
-        v = webrtcvad.Vad()
-        v.set_mode(VAD_AGGRESSIVENESS)
-        vad = v
-        LOG.info("[hotword] VAD listo (webrtcvad, modo %d)", VAD_AGGRESSIVENESS)
-    except Exception as e:
-        vad = None
-        LOG.info("[hotword] VAD no disponible (webrtcvad): %s", e)
+def vu_of_int16(pcm: array):
+    if not pcm: return (0.0, 0)
+    acc = 0.0; peak = 0
+    for v in pcm:
+        av = abs(v); peak = max(peak, av); acc += float(v)*float(v)
+    rms = math.sqrt(acc / len(pcm))
+    return (rms, peak)
 
-def _apply_vad(pcm: bytes) -> bytes:
-    if not vad:
-        return pcm
-    frame_ms = 30
-    sr = 16000
-    frame_len = int(sr * 2 * frame_ms / 1000)
-    out = bytearray()
-    for i in range(0, len(pcm), frame_len):
-        chunk = pcm[i:i+frame_len]
-        if len(chunk) < frame_len:
-            break
-        if vad.is_speech(chunk, sr):
-            out += chunk
-    # log informativo
+def clamp_int16(x: int) -> int:
+    if x > 32767: return 32767
+    if x < -32768: return -32768
+    return x
+
+def list_pyaudio_devices():
+    pa = pyaudio.PyAudio()
+    pulse_idx, first_input = None, None
     try:
-        removed = max(0.0, (len(pcm) - len(out)) / (sr * 2))
-        if removed > 0:
-            LOG.info("VAD filter removed %02d:%05.2f of audio", int(removed // 60), removed % 60)
+        n = pa.get_device_count()
+        print(f"[hotword] PyAudio devices: {n}", flush=True)
+        for i in range(n):
+            info = pa.get_device_info_by_index(i)
+            name = (info.get("name") or "")
+            max_in = int(info.get("maxInputChannels") or 0)
+            print(f"  - #{i}: '{name}' inputs={max_in}", flush=True)
+            if max_in > 0 and first_input is None:
+                first_input = i
+            if "pulse" in name.lower() or "pulseaudio" in name.lower():
+                pulse_idx = i
+        return (pulse_idx if pulse_idx is not None else first_input, pa)
     except Exception:
-        pass
-    return bytes(out)
+        pa.terminate()
+        raise
 
-# ---------- ASR ----------
-def _init_asr():
-    global asr
+def preflight_parec(secs=1, rate=16000):
+    cmd = ["parec"]
+    if PULSE_SOURCE: cmd += ["-d", PULSE_SOURCE]
+    cmd += ["--rate", str(rate), "--format", "s16le", "--channels", "1"]
+    print(f"[hotword] preflight parec: {' '.join(cmd)}", flush=True)
     try:
-        from faster_whisper import WhisperModel
-        device = FW_DEVICE
-        compute_type = FW_COMPUTE_TYPE
-        try:
-            asr = WhisperModel(ASR_MODEL, device=device, compute_type=compute_type, download_root=HF_HOME)
-        except Exception as e:
-            # Si falla CUDA, probamos CPU automáticamente
-            if "CUDA" in repr(e) or "no CUDA-capable device" in repr(e):
-                LOG.info("[hotword] CUDA no disponible, usando CPU…")
-                asr = WhisperModel(ASR_MODEL, device="cpu", compute_type="int8", download_root=HF_HOME)
-            else:
-                raise
-        LOG.info("[hotword] ASR listo (faster-whisper, device=%s)", device if asr else "cpu")
-    except Exception as e:
-        asr = None
-        LOG.info("[hotword] ASR no disponible (faster-whisper): %s", e)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=0)
+    except FileNotFoundError:
+        print("[hotword] parec no está en PATH", flush=True); return False
+    got = array('h')
+    end = time.time() + secs
+    frame_bytes = 1024 * 2
+    while time.time() < end:
+        chunk = proc.stdout.read(frame_bytes)
+        if not chunk: break
+        pcm = array('h'); pcm.frombytes(chunk); got.extend(pcm)
+    proc.kill()
+    rms, peak = vu_of_int16(got)
+    print(f"[hotword] preflight parec RMS={rms:.1f} PEAK={peak}", flush=True)
+    return len(got) > 0
 
-def transcribe(pcm: bytes) -> str:
-    if not asr:
-        return ""
-    from io import BytesIO
-    import soundfile as sf
-    import numpy as np
-    arr = (np.frombuffer(pcm, dtype="<i2").astype("float32") / 32768.0)
-    bio = BytesIO(); sf.write(bio, arr, 16000, subtype="PCM_16", format="WAV"); bio.seek(0)
-    segments, _ = asr.transcribe(
-        bio,
-        language=ASR_LANGUAGE,
-        beam_size=1,
-        best_of=1,
-        vad_filter=False,                  # ya aplicamos nuestro VAD
-        condition_on_previous_text=False,  # más robusto para frases sueltas
+def run_rtsst_normal():
+    print("[hotword] modo: RealtimeSTT wakeword (PyAudio)", flush=True)
+    dev_index, pa = list_pyaudio_devices()
+    if dev_index is None:
+        print("[hotword] ERROR: sin dispositivos de entrada", flush=True); return
+    preflight_parec(secs=1, rate=16000)
+    pa.terminate()
+
+    common = dict(
+        model=MODEL_SIZE, language=LANGUAGE, device=DEVICE,
+        on_wakeword_detection_start=lambda: print("[hotword] → escuchando wakeword…", flush=True),
+        on_wakeword_detection_end=lambda:   print("[hotword] ← deja de escuchar wakeword", flush=True),
+        on_wakeword_detected=lambda: (print("[hotword] WAKEWORD DETECTADA", flush=True), play_beep()),
+        on_recording_start=lambda: print("[hotword] ▶ grabación", flush=True),
+        on_recording_stop=lambda:  print("[hotword] ■ fin grabación", flush=True),
+        on_recorded_chunk=lambda b: (lambda r,p: print(f"[VU] rms={r:.1f} peak={p}", flush=True))(*vu_of_bytes(b)),
+        wake_words_sensitivity=SENS,
+        wake_word_buffer_duration=0.6,
+        wake_word_activation_delay=0.0,
+        silero_sensitivity=0.6,
+        webrtc_sensitivity=2,
+        enable_realtime_transcription=False,
+        input_device_index=dev_index,
     )
-    return "".join(seg.text for seg in segments).strip()
 
-def _speak_with_tonto(text: str):
+    def vu_of_bytes(b):
+        pcm = array('h'); pcm.frombytes(b or b""); return vu_of_int16(pcm)
+
+    recorder = None
+    if BACKEND_ENV == "oww":
+        recorder = AudioToTextRecorder(wakeword_backend="oww", openwakeword_model_paths="", **common)
+    if recorder is None:
+        recorder = AudioToTextRecorder(wakeword_backend="pvporcupine", wake_words=",".join(KEYWORDS), **common)
+
+    print(f"🎤 Di {KEYWORDS} …", flush=True)
     import requests
-    try:
-        payload = {TONTO_FIELD: text}
-        r = requests.post(TONTO_URL, json=payload, timeout=30)
-        LOG.info("[hotword] Tonto habló: %s", r.json())
-    except Exception as e:
-        LOG.info("[hotword] fallo al llamar a /speak: %r", e)
-
-# ---------- Main loop ----------
-def main():
-    global oww_model, vad, asr   # <- evita UnboundLocalError
-    _init_oww()
-    _init_vad()
-    _init_asr()
-
-    told_fallback = False
-
     while True:
         try:
-            triggered = False
+            txt = recorder.text()
+            if not txt or not txt.strip(): continue
+            q = txt.strip(); print(f"🗣️  {q}", flush=True)
+            try:
+                r = requests.post(ASSISTANT_URL, json={"question": q}, timeout=60)
+                if r.status_code != 200:
+                    print(f"[hotword] Assistant HTTP {r.status_code}: {r.text}", flush=True)
+            except Exception as e:
+                print(f"[hotword] error enviando a assistant: {e}", flush=True)
+        except KeyboardInterrupt:
+            print("[hotword] detenido por usuario.", flush=True); break
+        except Exception as e:
+            print(f"[hotword] loop error: {e}", flush=True); time.sleep(1)
 
-            # Intento con OWW si está disponible
-            if oww_model is not None:
-                pcm = _capture_pcm(0.8)
-                if pcm:
-                    import numpy as np
-                    f32 = (np.frombuffer(pcm, dtype="<i2").astype("float32") / 32768.0)
-                    scores = oww_model.predict(f32) or {}  # dict: {model_name: score}
-                    items = [(k, v) for k, v in scores.items() if not OWW_ALLOW or k in OWW_ALLOW]
-                    if any(v >= WAKE_SENSITIVITY for _, v in items):
-                        LOG.info("[hotword] ¡Hotword por OWW!")
-                        _beep()
-                        triggered = True
+def _load_whisper_safely():
+    want_device = DEVICE
+    try:
+        if want_device.lower() == "cuda":
+            print(f"[hotword] cargando faster-whisper: {MODEL_SIZE} (float32) en cuda …", flush=True)
+            return WhisperModel(MODEL_SIZE, device="cuda", compute_type="float32")
+        else:
+            print(f"[hotword] cargando faster-whisper: {MODEL_SIZE} (int8) en cpu …", flush=True)
+            return WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8")
+    except RuntimeError as e:
+        msg = str(e)
+        print(f"[hotword] aviso al cargar en {want_device}: {msg}", flush=True)
+        print("[hotword] fallback → CPU int8", flush=True)
+        return WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8")
 
-            # Fallback por ASR si OWW no disparó (anunciar solo una vez)
-            if not triggered:
-                if not told_fallback:
-                    LOG.info("[hotword] ¡Hotword (fallback)!")
-                    told_fallback = True
+def run_pipe_porcupine():
+    """PAREC + Porcupine (no bloqueante) + grabación propia + transcripción con faster-whisper."""
+    print("[hotword] modo: PAREC + Porcupine + faster-whisper (EOS por silencio)", flush=True)
 
-                pcm = _capture_pcm(MAX_LISTEN_SECONDS)
-                if vad:
-                    pcm = _apply_vad(pcm)
-                txt = transcribe(pcm)
+    print("[hotword] modo: PAREC + Porcupine + faster-whisper (EOS por silencio)", flush=True)
+    model = _load_whisper_safely()
+    print("[hotword] faster-whisper listo.", flush=True)
 
-                if not txt:
-                    LOG.info("[hotword] ASR: transcripción vacía.")
-                    time.sleep(COOLDOWN_AFTER_EMPTY)
+    cmd = ["parec"]
+    if PULSE_SOURCE:
+        cmd += ["-d", PULSE_SOURCE]
+    cmd += ["--rate", "16000", "--format", "s16le", "--channels", "1"]
+    print(f"[hotword] exec: {' '.join(cmd)}", flush=True)
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=0)
+    except FileNotFoundError:
+        print("[hotword] ERROR: parec no disponible", flush=True)
+        return
+
+    try:
+        import pvporcupine
+    except Exception as e:
+        print("[hotword] ERROR: pvporcupine no está instalado:", e, flush=True)
+        proc.terminate()
+        return
+    porcupine = pvporcupine.create(keywords=KEYWORDS, sensitivities=[SENS]*len(KEYWORDS))
+    RATE  = porcupine.sample_rate      # 16000
+    FRAME = porcupine.frame_length     # 512 (32ms)
+    BYTES_PER_SAMPLE = 2
+    print(f"[hotword] Porcupine rate={RATE} frame={FRAME}", flush=True)
+    print(f"🎤 Di {KEYWORDS} …", flush=True)
+    play_beep()
+    play_beep()
+    play_beep()
+
+    from array import array
+    def read_exact(nbytes: int) -> bytes:
+        buf = b""
+        while len(buf) < nbytes:
+            chunk = proc.stdout.read(nbytes - len(buf))
+            if not chunk:
+                break
+            buf += chunk
+        return buf
+
+    vu_bucket = array('h')
+    next_vu_ts = 0.0
+    def feed_vu(raw_bytes: bytes, apply_gain: bool) -> array:
+        nonlocal vu_bucket, next_vu_ts
+        pcm = array('h')
+        if raw_bytes:
+            pcm.frombytes(raw_bytes)
+            if apply_gain and GAIN_LINEAR != 1.0:
+                for i, v in enumerate(pcm):
+                    pcm[i] = clamp_int16(int(v * GAIN_LINEAR))
+        # VU cada ~1s
+        now = time.time()
+        vu_bucket.extend(pcm)
+        if now >= next_vu_ts:
+            rms, peak = vu_of_int16(vu_bucket)
+            print(f"[VU] rms={rms:.1f} peak={peak}", flush=True)
+            vu_bucket = array('h')
+            next_vu_ts = now + 1.0
+        return pcm
+
+    MIN_TALK_SEC           = float(os.environ.get("MIN_TALK_SEC", "0.6"))
+    MAX_CMD_SEC            = float(os.environ.get("MAX_CMD_SEC",  "8"))
+    SILENCE_RMS_THRESHOLD  = float(os.environ.get("SILENCE_RMS",  "700"))
+    SILENCE_HANG_SEC       = float(os.environ.get("SILENCE_HANG", "0.8"))
+
+    min_frames_rec   = int((RATE / FRAME) * MIN_TALK_SEC)
+    max_frames_rec   = int((RATE / FRAME) * MAX_CMD_SEC)
+    silence_frames   = int((RATE / FRAME) * SILENCE_HANG_SEC)
+
+    try:
+        while True:
+            raw = read_exact(FRAME * BYTES_PER_SAMPLE)
+            if not raw:
+                if proc.poll() is not None:
+                    print("[hotword] parec terminó", flush=True)
+                    break
+                time.sleep(0.005)
+                continue
+
+            pcm = feed_vu(raw, apply_gain=True)
+            try:
+                idx = porcupine.process(pcm)
+            except Exception as e:
+                print(f"[hotword] porcupine.process error: {e}", flush=True)
+                idx = -1
+
+            if idx < 0:
+                continue
+
+            print(f"[hotword] WAKEWORD DETECTADA: {KEYWORDS[idx]} (idx={idx})", flush=True)
+            play_beep()
+
+            recorded = array('h')
+            frames_seen     = 0
+            silent_in_a_row = 0
+            started_ts      = time.time()
+            preroll = int(RATE / FRAME * 0.3)
+
+            for _ in range(preroll):
+                r = read_exact(FRAME * BYTES_PER_SAMPLE)
+                if not r: break
+                p = feed_vu(r, apply_gain=False)
+                recorded.extend(p)
+                frames_seen += 1
+
+            print("[hotword] ▶ grabación", flush=True)
+
+            while True:
+                r = read_exact(FRAME * BYTES_PER_SAMPLE)
+                if not r:
+                    if proc.poll() is not None:
+                        print("[hotword] parec terminó durante grabación", flush=True)
+                        break
+                    time.sleep(0.002)
                     continue
 
-                LOG.info("[hotword] ASR: %r", txt)
-                lowered = txt.lower()
-                if any(h in lowered for h in HOTWORDS):
-                    _beep()
-                    _speak_with_tonto(txt)
-                    time.sleep(COOLDOWN_AFTER_TRIGGER)
+                p = feed_vu(r, apply_gain=False)
+                recorded.extend(p)
+                frames_seen += 1
+
+                rms, peak = vu_of_int16(p)
+                if rms < SILENCE_RMS_THRESHOLD and frames_seen > min_frames_rec:
+                    silent_in_a_row += 1
+                else:
+                    silent_in_a_row = 0
+
+                if silent_in_a_row >= silence_frames:
+                    print("[hotword] ■ fin grabación (silencio)", flush=True)
+                    break
+                if frames_seen >= max_frames_rec:
+                    print("[hotword] ■ fin grabación (max timeout)", flush=True)
+                    break
+
+            if len(recorded) == 0:
+                print("[hotword] nada grabado; vuelvo a wake", flush=True)
                 continue
 
-            # Si OWW disparó, capturamos utterance y lanzamos ASR
-            pcm = _capture_pcm(MAX_LISTEN_SECONDS)
-            if vad:
-                pcm = _apply_vad(pcm)
-            txt = transcribe(pcm)
-            if not txt:
-                LOG.info("[hotword] ASR: transcripción vacía.")
-                time.sleep(COOLDOWN_AFTER_EMPTY)
-                continue
-            LOG.info("[hotword] ASR: %r", txt)
-            _speak_with_tonto(txt)
-            time.sleep(COOLDOWN_AFTER_TRIGGER)
+            import numpy as np
+            pcm_np = np.asarray(recorded, dtype=np.int16).astype(np.float32) / 32768.0
 
-        except Exception as e:
-            LOG.info("[hotword] loop error: %r", e)
-            time.sleep(0.5)
+            print(f"[hotword] transcribiendo… muestras={len(pcm_np)} (~{len(pcm_np)/RATE:.2f}s)", flush=True)
+            segments, info = model.transcribe(pcm_np, language=LANGUAGE, vad_filter=False, beam_size=5)
+            text = "".join(seg.text for seg in segments).strip()
+            print(f"🗣️  {text if text else '(vacío)'}", flush=True)
+
+            if text:
+                try:
+                    import requests
+                    r = requests.post(ASSISTANT_URL, json={"question": text}, timeout=60)
+                    if r.status_code != 200:
+                        print(f"[hotword] Assistant HTTP {r.status_code}: {r.text}", flush=True)
+                except Exception as e:
+                    print(f"[hotword] error enviando a assistant: {e}", flush=True)
+
+            print(f"[hotword] listo; escuchando wakeword otra vez.", flush=True)
+
+    except KeyboardInterrupt:
+        print("[hotword] detenido por usuario.", flush=True)
+    finally:
+        try: porcupine.delete()
+        except Exception: pass
+        try: proc.terminate()
+        except Exception: pass
+
+def main():
+    print("[hotword] iniciando…", flush=True)
+    log_env()
+    if USE_PORCUPINE_PIPE:
+        run_pipe_porcupine()
+    elif USE_PAREC_PIPE:
+        print("[hotword] AVISO: USE_PAREC_PIPE está obsoleto aquí; usa USE_PORCUPINE_PIPE=1", flush=True)
+        run_pipe_porcupine()
+    else:
+        run_rtsst_normal()
 
 if __name__ == "__main__":
     main()
