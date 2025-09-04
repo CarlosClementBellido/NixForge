@@ -111,5 +111,32 @@
     };
   };
 
+  containers.piper-train = {
+    autoStart = true;
+    privateNetwork = true;
+    hostAddress = "192.168.106.1";
+    localAddress = "192.168.106.2";
+
+    # Pasa GPU y librerías del driver al contenedor
+    extraFlags = [
+      "--bind-ro=/run/opengl-driver:/run/opengl-driver"
+      "--bind-ro=/dev/nvidiactl"
+      "--bind-ro=/dev/nvidia-uvm"
+      "--bind-ro=/dev/nvidia-uvm-tools"
+      "--bind-ro=/dev/nvidia-modeset"
+      "--bind=/dev/nvidia0"
+    ];
+
+    bindMounts = {
+      "/var/lib/piper" = { hostPath = "/var/lib/piper"; isReadOnly = false; };
+      "/var/lib/piper/models" = {
+        hostPath = "/etc/nixos/nixforge/containers/piper-train/models";
+        isReadOnly = false; # ahora escribimos metadata.csv y outputs aquí
+      };
+    };
+
+    # Config del contenedor
+    config = import ../containers/piper-train/configuration.nix;
+  };
 
 }

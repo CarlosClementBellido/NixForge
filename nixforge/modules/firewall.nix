@@ -25,7 +25,7 @@
       iptables -C FORWARD -i wan0    -o lan1g0 -m state --state RELATED,ESTABLISHED -j ACCEPT || iptables -A FORWARD -i wan0 -o lan1g0 -m state --state RELATED,ESTABLISHED -j ACCEPT
 
       # NAT MASQUERADE para todas tus subredes saliendo por wan0
-      for NET in 192.168.10.0/24 192.168.20.0/24 192.168.100.0/24 192.168.101.0/24 192.168.102.0/24 192.168.103.0/24 192.168.104.0/24 192.168.105.0/24; do
+      for NET in 192.168.10.0/24 192.168.20.0/24 192.168.100.0/24 192.168.101.0/24 192.168.102.0/24 192.168.103.0/24 192.168.104.0/24 192.168.105.0/24 192.168.106.0/24; do
         iptables -t nat -C POSTROUTING -s $NET -o wan0 -j MASQUERADE || \
         iptables -t nat -A POSTROUTING -s $NET -o wan0 -j MASQUERADE
       done
