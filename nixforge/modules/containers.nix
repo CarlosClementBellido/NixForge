@@ -111,32 +111,38 @@
     };
   };
 
-  containers.piper-train = {
-    autoStart = true;
-    privateNetwork = true;
-    hostAddress = "192.168.106.1";
-    localAddress = "192.168.106.2";
+#  containers.vpn = {
+#    autoStart = true;
+#
+#    hostAddress = "192.168.106.1";
+#    localAddress = "192.168.106.2";
+#
+#    # Compartir la red del host: wg0 y puertos viven en el host
+#    privateNetwork = false;
+#
+#    # Delegación de cgroups + capabilities suficientes
+#    extraFlags = [
+#      "--private-users=off"
+#      # delega cgroups para que Podman pueda crear sus scopes
+#      "--property=Delegate=yes"
+#      # capabilities explícitas (mejor que 'all')
+#      "--capability=CAP_NET_ADMIN,CAP_SYS_ADMIN,CAP_SYS_MODULE,CAP_MKNOD,CAP_SETGID,CAP_SETUID"
+#      # DNS estático como en tus otros contenedores (opcional)
+#      "--bind-ro=/var/lib/nixos/static-dns/resolv.conf:/etc/resolv.conf"
+#    ];
+#
+#    # Persistencia y TUN del host
+#    bindMounts."/var/lib/wg-easy" = {
+#      hostPath = "/var/lib/wg-easy";
+#      isReadOnly = false;
+#    };
+#    bindMounts."/dev/net/tun" = {
+#      hostPath = "/dev/net/tun";
+#      isReadOnly = false;
+#    };
+#
+#    config = import ../containers/vpn/configuration.nix;
+#  };
 
-    # Pasa GPU y librerías del driver al contenedor
-    extraFlags = [
-      "--bind-ro=/run/opengl-driver:/run/opengl-driver"
-      "--bind-ro=/dev/nvidiactl"
-      "--bind-ro=/dev/nvidia-uvm"
-      "--bind-ro=/dev/nvidia-uvm-tools"
-      "--bind-ro=/dev/nvidia-modeset"
-      "--bind=/dev/nvidia0"
-    ];
-
-    bindMounts = {
-      "/var/lib/piper" = { hostPath = "/var/lib/piper"; isReadOnly = false; };
-      "/var/lib/piper/models" = {
-        hostPath = "/etc/nixos/nixforge/containers/piper-train/models";
-        isReadOnly = false; # ahora escribimos metadata.csv y outputs aquí
-      };
-    };
-
-    # Config del contenedor
-    config = import ../containers/piper-train/configuration.nix;
-  };
 
 }

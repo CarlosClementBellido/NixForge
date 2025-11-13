@@ -35,4 +35,26 @@
     };
     wantedBy = [ "default.target" ];
   };
+
+  systemd.network.networks."30-lan10g0" = {
+    matchConfig.Name = "lan10g0";
+    networkConfig = {
+      ConfigureWithoutCarrier = true;
+      IPv6AcceptRA = false;
+      KeepConfiguration = "static";
+    };
+    linkConfig.RequiredForOnline = false;
+    address = [ "192.168.10.1/24" ];
+  };
+
+  systemd.network.networks."30-lan1g0" = {
+    matchConfig.Name = "lan1g0";
+    networkConfig = {
+      ConfigureWithoutCarrier = true;
+      IPv6AcceptRA = false;
+      KeepConfiguration = "static";
+    };
+    linkConfig.RequiredForOnline = false;
+    address = [ "192.168.20.1/24" ];
+  };
 }

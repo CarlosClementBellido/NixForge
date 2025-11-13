@@ -8,6 +8,16 @@
     recommendedOptimisation = true;
 
     virtualHosts = {
+
+      "vpn.server.clementbellido.es" = {
+        enableACME = true;
+        forceSSL = true;
+        locations."/" = {
+          proxyPass = "http://192.168.106.2:51821";
+          proxyWebsockets = true;
+        };
+      };
+
       "pterodactyl.server.clementbellido.es" = {
         enableACME = true;
         forceSSL = true;
@@ -67,6 +77,19 @@
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
+          '';
+        };
+
+        locations."/webdav/" = {
+          proxyPass = "http://192.168.101.2:8080/";
+          extraConfig = ''
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            client_max_body_size 0;
+            proxy_request_buffering off;
           '';
         };
       };

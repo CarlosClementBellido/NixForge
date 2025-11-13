@@ -10,15 +10,15 @@
   # Nombres de interfaz estables por MAC (udev .link)
   systemd.network.links = {
     "10-wan0" = {
-      matchConfig.MACAddress = "a0:36:9f:e6:97:5c";
+      matchConfig.PermanentMACAddress = "a0:36:9f:e6:97:5c";
       linkConfig.Name = "wan0";
     };
     "10-lan10g0" = {
-      matchConfig.MACAddress = "a0:36:9f:e6:97:5e";
+      matchConfig.PermanentMACAddress = "a0:36:9f:e6:97:5e";
       linkConfig.Name = "lan10g0";
     };
     "10-lan1g0" = {
-      matchConfig.MACAddress = "00:e0:24:6f:32:ae";
+      matchConfig.PermanentMACAddress = "00:e0:24:6f:32:ae";
       linkConfig.Name = "lan1g0";
     };
   };
@@ -40,7 +40,7 @@
   networking.nat = {
     enable = true;
     externalInterface = "wan0";
-    internalInterfaces = [ "lan10g0" "lan1g0" "ve-*" "ve+" ];
+    internalInterfaces = [ "lan10g0" "lan1g0" "ve-*" "ve+" "wg0" ];
     forwardPorts = [
       { sourcePort = 8096;  destination = "192.168.100.2:8096";  proto = "tcp"; }
       { sourcePort = 9091;  destination = "192.168.101.2:9091"; proto = "tcp"; }
@@ -60,11 +60,17 @@
     "net.ipv4.conf.default.rp_filter" = 2;
     "net.bridge.bridge-nf-call-iptables" = 1;
     "net.bridge.bridge-nf-call-ip6tables" = 1;
+    "net.ipv6.conf.all.forwarding" = 1;
   };
 
   # (Opcional) Módulos; puedes dejarlos si ya te funcionan reglas iptables
   boot.kernelModules = [
-    "overlay" "br_netfilter" "nf_conntrack" "nf_nat" "ip_tables" "iptable_nat" "x_tables"
+    "overlay" "br_netfilter" "nf_conntrack" "nf_nat" "ip_tables" "iptable_nat" "x_tables" "wireguard"
+  ];
+
+  systemd.tmpfiles.rules = [
+    "d /var/lib/wg-easy 0750 root root -"
+    "d /dev/net 0755 root root -"
   ];
 
 }
